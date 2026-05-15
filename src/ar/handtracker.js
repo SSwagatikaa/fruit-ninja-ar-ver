@@ -77,10 +77,17 @@ async function initTFHandTracker() {
       audio: false
     })
     video.srcObject = stream
-    await new Promise(resolve => video.onloadedmetadata = resolve)
+    await new Promise(resolve => {
+  video.onloadedmetadata = () => {
+    video.play().then(resolve)
+  }
+})
+
+// extra wait for camera to warm up
+    await new Promise(resolve => setTimeout(resolve, 500))
 
     detectTFHands(detector, video)
-
+    
   } catch (err) {
     console.error('TF hand tracker failed:', err)
     const el = document.getElementById('tf-loading')
@@ -93,8 +100,16 @@ async function initTFHandTracker() {
 }
 
 async function detectTFHands(detector, video) {
+  // wait for video to have valid dimensions
+  if (video.videoWidth === 0 || video.videoHeight === 0) {
+    requestAnimationFrame(() => detectTFHands(detector, video))
+    return
+  }
+
   try {
-    const hands = await detector.estimateHands(video)
+    const hands = await detector.estimateHands(video, {
+      flipHorizontal: false
+    })
 
     if (hands.length > 0) {
       const keypoints = hands[0].keypoints
@@ -104,10 +119,12 @@ async function detectTFHands(detector, video) {
       const isPointing = indexTip.y < indexMid.y
 
       const rawX = indexTip.x / video.videoWidth
+      const rawY = indexTip.y / video.videoHeight
+
       const screenX = window.handMirror
         ? (1 - rawX) * window.innerWidth
         : rawX * window.innerWidth
-      const screenY = (indexTip.y / video.videoHeight) * window.innerHeight
+      const screenY = rawY * window.innerHeight
 
       updateCursor(screenX, screenY, isPointing)
       addTrailPoint(screenX, screenY, isPointing)
@@ -119,7 +136,7 @@ async function detectTFHands(detector, video) {
       hideCursor()
     }
   } catch (e) {
-    // skip frame
+    console.warn('Detection error:', e)
   }
 
   requestAnimationFrame(() => detectTFHands(detector, video))
