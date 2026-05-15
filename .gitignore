@@ -75,3 +75,7 @@ out
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# AR Fruit Ninja
+hand_landmarker.task
+*.task
