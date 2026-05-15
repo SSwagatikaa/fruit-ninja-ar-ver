@@ -77,3 +77,9 @@ Fruit GLB models from [poly.pizza](https://poly.pizza) and [kenney.nl](https://k
 
 ## 🙏 Credits
 Built with ❤️ using Three.js, MediaPipe, and OpenCV
+## 🖥️ Run Locally (with Finger Mode)
+
+Select **Finger Mode** → allow camera → raise index finger to slice!
+
+## 🌐 Play Online (Cursor Mode only)
+👉 https://fruit-ninja-ar-ver.netlify.app

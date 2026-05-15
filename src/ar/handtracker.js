@@ -62,7 +62,6 @@ async function initTFHandTracker() {
 
     // get camera feed
     const video = document.createElement('video')
-    video.id = 'hand-tracker-video'
     video.setAttribute('playsinline', '')
     video.setAttribute('autoplay', '')
     video.muted = true
@@ -78,11 +77,8 @@ async function initTFHandTracker() {
       audio: false
     })
     video.srcObject = stream
-    await new Promise(resolve => {
-  video.onloadeddata = () => resolve()
-})
-    await video.play()
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    await new Promise(resolve => video.onloadedmetadata = resolve)
+
     detectTFHands(detector, video)
 
   } catch (err) {
@@ -97,42 +93,35 @@ async function initTFHandTracker() {
 }
 
 async function detectTFHands(detector, video) {
-  if (!video || video.readyState < 2 || video.videoWidth === 0) {
-    requestAnimationFrame(() => detectTFHands(detector, video))
-    return
-  }
-
   try {
-    const hands = await detector.estimateHands(video, {
-      flipHorizontal: true
-    })
+    const hands = await detector.estimateHands(video)
 
     if (hands.length > 0) {
-      const kp = hands[0].keypoints
-      const tip = kp[8]   // index tip
-      const mid = kp[6]   // index mid
-      const wrist = kp[0] // wrist
+      const keypoints = hands[0].keypoints
+      const indexTip = keypoints[8]
+      const indexMid = keypoints[6]
 
-      // finger is "up" if tip is above wrist by 20% of video height
-      const isPointing = (wrist.y - tip.y) > (video.videoHeight * 0.2)
+      const isPointing = indexTip.y < indexMid.y
 
+      const rawX = indexTip.x / video.videoWidth
       const screenX = window.handMirror
-        ? (1 - tip.x / video.videoWidth) * window.innerWidth
-        : (tip.x / video.videoWidth) * window.innerWidth
-      const screenY = (tip.y / video.videoHeight) * window.innerHeight
+        ? (1 - rawX) * window.innerWidth
+        : rawX * window.innerWidth
+      const screenY = (indexTip.y / video.videoHeight) * window.innerHeight
 
       updateCursor(screenX, screenY, isPointing)
       addTrailPoint(screenX, screenY, isPointing)
-      if (isPointing && onSliceCallback) onSliceCallback(screenX, screenY)
 
+      if (isPointing && onSliceCallback) {
+        onSliceCallback(screenX, screenY)
+      }
     } else {
       hideCursor()
     }
   } catch (e) {
-    console.warn('Detection error:', e)
+    // skip frame
   }
 
-  await new Promise(r => setTimeout(r, 32))
   requestAnimationFrame(() => detectTFHands(detector, video))
 }
 
