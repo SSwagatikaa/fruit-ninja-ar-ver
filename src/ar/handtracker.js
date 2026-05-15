@@ -1,7 +1,10 @@
+const WS_URL = window.location.hostname === 'localhost' 
+  ? 'ws://localhost:8765'
+  : null  // no hand tracking on deployed version
+
 let onSliceCallback = null
 let cursorEl = null
 let ws = null
-let lastProcess = 0
 
 // trail canvas
 let trailCanvas, trailCtx
@@ -12,7 +15,52 @@ export function initHandTracker(onSlice) {
   onSliceCallback = onSlice
   createCursor()
   initFingerTrail()
-  connectWebSocket()
+
+  if (WS_URL) {
+    connectWebSocket()
+  } else {
+    // on deployed version — show message
+    showNoHandTrackerMessage()
+  }
+}
+
+function showNoHandTrackerMessage() {
+  const el = document.createElement('div')
+  el.style.cssText = `
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.85);
+    border: 2px solid #ff8800;
+    border-radius: 12px;
+    padding: 24px 32px;
+    font-family: 'Arial Black', sans-serif;
+    color: white;
+    text-align: center;
+    z-index: 9999;
+    max-width: 380px;
+  `
+  el.innerHTML = `
+    <div style="font-size:32px; margin-bottom:12px;">☝️</div>
+    <h3 style="color:#ff8800; margin-bottom:8px;">Finger Mode</h3>
+    <p style="font-size:14px; color:#aaa; line-height:1.8;">
+      Finger mode requires running<br>
+      <b style="color:white;">hand_server.py</b> locally.<br><br>
+      Clone the repo and run:<br>
+      <code style="color:#ffdd00;">py -3.11 hand_server.py</code><br><br>
+      Then open <b style="color:white;">localhost:5173</b>
+    </p>
+    <button id="close-msg" style="
+      margin-top:16px;
+      padding:10px 24px;
+      background:linear-gradient(180deg,#ffdd00,#ff8800);
+      color:#000; border:none;
+      border-radius:6px; cursor:pointer;
+      font-family:'Arial Black',sans-serif;
+    ">Got it</button>
+  `
+  document.body.appendChild(el)
+  document.getElementById('close-msg').addEventListener('click', () => el.remove())
 }
 
 function initFingerTrail() {
@@ -52,7 +100,6 @@ function drawFingerTrail() {
 
     const alpha = (i / trailPoints.length) * p2.age
 
-    // outer glow
     trailCtx.beginPath()
     trailCtx.moveTo(p1.x, p1.y)
     trailCtx.lineTo(p2.x, p2.y)
@@ -61,7 +108,6 @@ function drawFingerTrail() {
     trailCtx.lineCap = 'round'
     trailCtx.stroke()
 
-    // mid glow
     trailCtx.beginPath()
     trailCtx.moveTo(p1.x, p1.y)
     trailCtx.lineTo(p2.x, p2.y)
@@ -70,7 +116,6 @@ function drawFingerTrail() {
     trailCtx.lineCap = 'round'
     trailCtx.stroke()
 
-    // bright core
     trailCtx.beginPath()
     trailCtx.moveTo(p1.x, p1.y)
     trailCtx.lineTo(p2.x, p2.y)
@@ -79,7 +124,6 @@ function drawFingerTrail() {
     trailCtx.lineCap = 'round'
     trailCtx.stroke()
 
-    // sparks — only every other point to save CPU
     if (i % 2 === 0 && Math.random() > 0.6) {
       trailCtx.beginPath()
       trailCtx.arc(p2.x, p2.y, Math.random() * 3, 0, Math.PI * 2)
@@ -88,7 +132,6 @@ function drawFingerTrail() {
     }
   }
 
-  // fade points
   for (let i = trailPoints.length - 1; i >= 0; i--) {
     trailPoints[i].age -= 0.08
     if (trailPoints[i].age <= 0) trailPoints.splice(i, 1)
@@ -98,39 +141,37 @@ function drawFingerTrail() {
 }
 
 function connectWebSocket() {
-  ws = new WebSocket('ws://localhost:8765')
+  ws = new WebSocket(WS_URL)
   let lastProcess = 0
 
   ws.onopen = () => console.log('Hand tracker connected!')
 
   ws.onmessage = (event) => {
-  const now = performance.now()
-  
-  // ✅ Parse JSON (matches what Python sends)
-  let data
-  try {
-    data = JSON.parse(event.data)
-  } catch (e) {
-    return
+    const now = performance.now()
+
+    let data
+    try {
+      data = JSON.parse(event.data)
+    } catch (e) {
+      return
+    }
+
+    const { x, y, active: isActive } = data
+
+    if (!isActive && now - lastProcess < 16) return
+    lastProcess = now
+
+    const screenX = window.handMirror
+      ? (1 - parseFloat(x)) * window.innerWidth
+      : parseFloat(x) * window.innerWidth
+
+    const screenY = parseFloat(y) * window.innerHeight
+
+    updateCursor(screenX, screenY, isActive)
+    addTrailPoint(screenX, screenY, isActive)
+
+    if (isActive && onSliceCallback) onSliceCallback(screenX, screenY)
   }
-
-  const { x, y, active: isActive } = data
-
-  // never throttle active slicing — only drop idle messages
-  if (!isActive && now - lastProcess < 16) return
-  lastProcess = now
-
-  const screenX = window.handMirror
-    ? (1 - parseFloat(x)) * window.innerWidth   // mirrored
-    : parseFloat(x) * window.innerWidth          // normal
-
-  const screenY = parseFloat(y) * window.innerHeight  // ✅ parseFloat added
-
-  updateCursor(screenX, screenY, isActive)
-  addTrailPoint(screenX, screenY, isActive)
-
-  if (isActive && onSliceCallback) onSliceCallback(screenX, screenY)
-}
 
   ws.onclose = () => {
     console.log('Reconnecting...')
@@ -161,10 +202,6 @@ function updateCursor(x, y, active) {
   cursorEl.style.display = 'block'
   cursorEl.style.left = `${x}px`
   cursorEl.style.top = `${y}px`
-  cursorEl.style.background = active
-    ? 'rgba(255,215,0,0.9)'
-    : 'rgba(255,255,255,0.2)'
-  cursorEl.style.boxShadow = active
-    ? '0 0 20px rgba(255,215,0,0.9)'
-    : 'none'
+  cursorEl.style.background = active ? 'rgba(255,215,0,0.9)' : 'rgba(255,255,255,0.2)'
+  cursorEl.style.boxShadow = active ? '0 0 20px rgba(255,215,0,0.9)' : 'none'
 }

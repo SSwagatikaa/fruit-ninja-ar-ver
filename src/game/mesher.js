@@ -5,12 +5,12 @@ const loader = new GLTFLoader()
 const models = {}
 
 const FRUIT_MODELS = [
-  { name: 'apple',      path: '/src/assets/models/Apple.glb' },
-  { name: 'watermelon', path: '/src/assets/models/Watermelon.glb' },
-  { name: 'orange',     path: '/src/assets/models/Orange.glb' },
-  { name: 'banana',     path: '/src/assets/models/Banana.glb' },
-  { name: 'strawberry', path: '/src/assets/models/Strawberry.glb' },
-  { name: 'bomb',       path: '/src/assets/models/Bomb.glb' },
+  { name: 'apple',      path: '/models/Apple.glb' },
+  { name: 'watermelon', path: '/models/Watermelon.glb' },
+  { name: 'orange',     path: '/models/Orange.glb' },
+  { name: 'banana',     path: '/models/Banana.glb' },
+  { name: 'strawberry', path: '/models/Strawberry.glb' },
+  { name: 'bomb',       path: '/models/Bomb.glb' },
 ]
 
 const TARGET_SIZE = 0.24 // all fruits will be this size
