@@ -1,6 +1,5 @@
-const WS_URL = window.location.hostname === 'localhost' 
-  ? 'ws://localhost:8765'
-  : null  // no hand tracking on deployed version
+const IS_LOCAL = window.location.hostname === 'localhost'
+const WS_URL = 'ws://localhost:8765'
 
 let onSliceCallback = null
 let cursorEl = null
@@ -16,53 +15,159 @@ export function initHandTracker(onSlice) {
   createCursor()
   initFingerTrail()
 
-  if (WS_URL) {
+  if (IS_LOCAL) {
+    console.log('Using Python WebSocket hand tracker')
     connectWebSocket()
   } else {
-    // on deployed version — show message
-    showNoHandTrackerMessage()
+    console.log('Using TensorFlow.js hand tracker')
+    initTFHandTracker()
   }
 }
 
-function showNoHandTrackerMessage() {
-  const el = document.createElement('div')
-  el.style.cssText = `
-    position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.85);
-    border: 2px solid #ff8800;
-    border-radius: 12px;
-    padding: 24px 32px;
-    font-family: 'Arial Black', sans-serif;
-    color: white;
-    text-align: center;
-    z-index: 9999;
-    max-width: 380px;
-  `
-  el.innerHTML = `
-    <div style="font-size:32px; margin-bottom:12px;">☝️</div>
-    <h3 style="color:#ff8800; margin-bottom:8px;">Finger Mode</h3>
-    <p style="font-size:14px; color:#aaa; line-height:1.8;">
-      Finger mode requires running<br>
-      <b style="color:white;">hand_server.py</b> locally.<br><br>
-      Clone the repo and run:<br>
-      <code style="color:#ffdd00;">py -3.11 hand_server.py</code><br><br>
-      Then open <b style="color:white;">localhost:5173</b>
-    </p>
-    <button id="close-msg" style="
-      margin-top:16px;
-      padding:10px 24px;
-      background:linear-gradient(180deg,#ffdd00,#ff8800);
-      color:#000; border:none;
-      border-radius:6px; cursor:pointer;
-      font-family:'Arial Black',sans-serif;
-    ">Got it</button>
-  `
-  document.body.appendChild(el)
-  document.getElementById('close-msg').addEventListener('click', () => el.remove())
+// ── TensorFlow.js hand tracking (online) ──────────────────────────────────
+async function initTFHandTracker() {
+  try {
+    // show loading message
+    const loading = document.createElement('div')
+    loading.id = 'tf-loading'
+    loading.style.cssText = `
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      border: 1px solid #ff8800;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-family: 'Arial Black', sans-serif;
+      font-size: 13px;
+      color: #ff8800;
+      z-index: 9999;
+      letter-spacing: 2px;
+    `
+    loading.textContent = '⚡ Loading hand tracker...'
+    document.body.appendChild(loading)
+
+    await window.tf.ready()
+
+    const model = window.handPoseDetection.SupportedModels.MediaPipeHands
+    const detector = await window.handPoseDetection.createDetector(model, {
+      runtime: 'tfjs',
+      modelType: 'lite',
+      maxHands: 1
+    })
+
+    loading.textContent = '✅ Hand tracker ready!'
+    setTimeout(() => loading.remove(), 2000)
+
+    // get camera feed
+    const video = document.createElement('video')
+    video.setAttribute('playsinline', '')
+    video.setAttribute('autoplay', '')
+    video.muted = true
+    video.style.cssText = `
+      position: fixed;
+      width: 1px; height: 1px;
+      opacity: 0; pointer-events: none;
+    `
+    document.body.appendChild(video)
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: 640, height: 480 },
+      audio: false
+    })
+    video.srcObject = stream
+    await new Promise(resolve => video.onloadedmetadata = resolve)
+
+    detectTFHands(detector, video)
+
+  } catch (err) {
+    console.error('TF hand tracker failed:', err)
+    const el = document.getElementById('tf-loading')
+    if (el) {
+      el.textContent = '❌ Hand tracker failed — check camera permissions'
+      el.style.color = '#ff3333'
+      setTimeout(() => el.remove(), 3000)
+    }
+  }
 }
 
+async function detectTFHands(detector, video) {
+  try {
+    const hands = await detector.estimateHands(video)
+
+    if (hands.length > 0) {
+      const keypoints = hands[0].keypoints
+      const indexTip = keypoints[8]
+      const indexMid = keypoints[6]
+
+      const isPointing = indexTip.y < indexMid.y
+
+      const rawX = indexTip.x / video.videoWidth
+      const screenX = window.handMirror
+        ? (1 - rawX) * window.innerWidth
+        : rawX * window.innerWidth
+      const screenY = (indexTip.y / video.videoHeight) * window.innerHeight
+
+      updateCursor(screenX, screenY, isPointing)
+      addTrailPoint(screenX, screenY, isPointing)
+
+      if (isPointing && onSliceCallback) {
+        onSliceCallback(screenX, screenY)
+      }
+    } else {
+      hideCursor()
+    }
+  } catch (e) {
+    // skip frame
+  }
+
+  requestAnimationFrame(() => detectTFHands(detector, video))
+}
+
+// ── Python WebSocket hand tracking (local) ────────────────────────────────
+function connectWebSocket() {
+  ws = new WebSocket(WS_URL)
+  let lastProcess = 0
+
+  ws.onopen = () => console.log('Hand tracker connected!')
+
+  ws.onmessage = (event) => {
+    const now = performance.now()
+
+    let data
+    try {
+      data = JSON.parse(event.data)
+    } catch (e) {
+      return
+    }
+
+    const { x, y, active: isActive } = data
+
+    if (!isActive && now - lastProcess < 16) return
+    lastProcess = now
+
+    const screenX = window.handMirror
+      ? (1 - parseFloat(x)) * window.innerWidth
+      : parseFloat(x) * window.innerWidth
+
+    const screenY = parseFloat(y) * window.innerHeight
+
+    updateCursor(screenX, screenY, isActive)
+    addTrailPoint(screenX, screenY, isActive)
+
+    if (isActive && onSliceCallback) onSliceCallback(screenX, screenY)
+  }
+
+  ws.onclose = () => {
+    console.log('Reconnecting...')
+    setTimeout(connectWebSocket, 500)
+  }
+
+  ws.onerror = (err) => console.warn('WebSocket error:', err)
+}
+
+// ── Trail ─────────────────────────────────────────────────────────────────
 function initFingerTrail() {
   trailCanvas = document.createElement('canvas')
   trailCanvas.width = window.innerWidth
@@ -140,47 +245,7 @@ function drawFingerTrail() {
   requestAnimationFrame(drawFingerTrail)
 }
 
-function connectWebSocket() {
-  ws = new WebSocket(WS_URL)
-  let lastProcess = 0
-
-  ws.onopen = () => console.log('Hand tracker connected!')
-
-  ws.onmessage = (event) => {
-    const now = performance.now()
-
-    let data
-    try {
-      data = JSON.parse(event.data)
-    } catch (e) {
-      return
-    }
-
-    const { x, y, active: isActive } = data
-
-    if (!isActive && now - lastProcess < 16) return
-    lastProcess = now
-
-    const screenX = window.handMirror
-      ? (1 - parseFloat(x)) * window.innerWidth
-      : parseFloat(x) * window.innerWidth
-
-    const screenY = parseFloat(y) * window.innerHeight
-
-    updateCursor(screenX, screenY, isActive)
-    addTrailPoint(screenX, screenY, isActive)
-
-    if (isActive && onSliceCallback) onSliceCallback(screenX, screenY)
-  }
-
-  ws.onclose = () => {
-    console.log('Reconnecting...')
-    setTimeout(connectWebSocket, 500)
-  }
-
-  ws.onerror = (err) => console.warn('WebSocket error:', err)
-}
-
+// ── Cursor ────────────────────────────────────────────────────────────────
 function createCursor() {
   cursorEl = document.createElement('div')
   cursorEl.style.cssText = `
@@ -204,4 +269,8 @@ function updateCursor(x, y, active) {
   cursorEl.style.top = `${y}px`
   cursorEl.style.background = active ? 'rgba(255,215,0,0.9)' : 'rgba(255,255,255,0.2)'
   cursorEl.style.boxShadow = active ? '0 0 20px rgba(255,215,0,0.9)' : 'none'
+}
+
+function hideCursor() {
+  if (cursorEl) cursorEl.style.display = 'none'
 }
