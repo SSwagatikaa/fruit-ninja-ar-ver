@@ -62,6 +62,7 @@ async function initTFHandTracker() {
 
     // get camera feed
     const video = document.createElement('video')
+    video.id = 'hand-tracker-video'
     video.setAttribute('playsinline', '')
     video.setAttribute('autoplay', '')
     video.muted = true
@@ -78,14 +79,10 @@ async function initTFHandTracker() {
     })
     video.srcObject = stream
     await new Promise(resolve => {
-  video.onloadedmetadata = () => {
-    video.play().then(resolve)
-  }
+  video.onloadeddata = () => resolve()
 })
-
-// extra wait for camera to warm up
-    await new Promise(resolve => setTimeout(resolve, 500))
-
+    await video.play()
+    await new Promise(resolve => setTimeout(resolve, 1000))
     detectTFHands(detector, video)
 
   } catch (err) {
@@ -100,7 +97,7 @@ async function initTFHandTracker() {
 }
 
 async function detectTFHands(detector, video) {
-  if (video.videoWidth === 0 || video.videoHeight === 0) {
+  if (!video || video.readyState < 2 || video.videoWidth === 0) {
     requestAnimationFrame(() => detectTFHands(detector, video))
     return
   }
