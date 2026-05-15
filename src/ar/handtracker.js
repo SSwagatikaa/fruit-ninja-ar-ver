@@ -87,7 +87,7 @@ async function initTFHandTracker() {
     await new Promise(resolve => setTimeout(resolve, 500))
 
     detectTFHands(detector, video)
-    
+
   } catch (err) {
     console.error('TF hand tracker failed:', err)
     const el = document.getElementById('tf-loading')
@@ -105,10 +105,11 @@ async function detectTFHands(detector, video) {
     requestAnimationFrame(() => detectTFHands(detector, video))
     return
   }
-
+  // add this at top of detectTFHands, after the videoWidth check:
+  await new Promise(r => setTimeout(r, 32)) // ~30fps cap
   try {
     const hands = await detector.estimateHands(video, {
-      flipHorizontal: false
+      flipHorizontal: true
     })
 
     if (hands.length > 0) {
@@ -116,7 +117,7 @@ async function detectTFHands(detector, video) {
       const indexTip = keypoints[8]
       const indexMid = keypoints[6]
 
-      const isPointing = indexTip.y < indexMid.y
+      const isPointing = true
 
       const rawX = indexTip.x / video.videoWidth
       const rawY = indexTip.y / video.videoHeight
